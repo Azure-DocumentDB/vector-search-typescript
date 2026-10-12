@@ -1,27 +1,29 @@
-# Validation boundary
+# Validation record — 2026-10-12
 
-## Local checks — 2026-10-12
+## Managed Azure result
 
-Node24.21.0 / npm11.19.0 on macOS arm64; strict TypeScript7.0.2, MongoDB7.7.0, Azure Identity4.13.3. `npm ci`, build, strict typecheck (`npm run lint`), and the **33/33 production-code/CLI subprocess tests** pass locally (zero skips). Tests use local in-memory store/transport doubles. An explicitly test-only Node module hook drives the actual CLI failure/exit-code matrix (connection/index/write/empty/rank/close errors); it is never loaded by normal/live commands or used as live evidence. No model calls, Docker or cloud provisioning were performed by the code worker.
+**6/6 algorithm/authentication cases passed** on a disposable managed Azure DocumentDB M30 in West US2, one shard, MongoDB8.0 compatibility,128GiB storage and high availability disabled. The matrix is IVF/HNSW/DiskANN × COS, repeated under native SCRAM-SHA-256 and Microsoft Entra OIDC with verified TLS and a client-IP firewall.
 
-Full and production-only npm audits report **zero known vulnerabilities** at this date. No advisories are ignored/overridden. Audit counts are point-in-time, not a security guarantee. CI is configured but not claimed remotely run by these local results.
+Tested implementation: `62174c5ae6fd716e7147f6ef1567b02f40fe3423`. The later commit containing this record changes only documentation.
 
-The pinned real fixture is separately checked locally for50 unique hotels,1536 dimensions, SHA-256, query extraction, finite vectors and independent COS/L2/IP top5 ranks. The synthetic metric fixture deliberately has different nearest-neighbor rankings for COS, L2 and IP to detect an accidentally shared metric oracle.
+The fixture contains50pinned public hotel records with1536-dimensional precomputed vectors; the query is the first stored vector. Actual index definitions were checked. Every case returned five results checked against a numeric reference appropriate to its metric; raw scores from different metrics are not comparable. This is not a semantic-quality, latency/throughput, production-size ANN or service-tier support benchmark.
 
-## Live Azure gate — operator-owned, not established by local tests
+Actual command-line execution and repeat runs were checked, not merely client construction. Repeated seeding inserted zero duplicates. An unrelated sentinel survived in every exercised collection. Existing user edits were preserved by insert-only seeding or safely refused as a fixture conflict; no test path dropped/reset/replaced existing data or indexes.
 
-`LIVE_AZURE_TEST=true npm run test:live` is an explicit real Azure gate, not a unit test and not a skip. It requires the documented disposable namespace/write/auth configuration. All algorithm/metric cases must pass the independent rank oracle in **both native SCRAM and Entra OIDC** modes, then pass an idempotent rerun, before claiming managed-Azure readiness. Publication operators should record dated server tier, exact commit, per-case evidence and cleanup result here. No Azure runtime success is asserted by this file yet.
+Each CLI also rejected disabled write consent, a system database target, a foreign host and an incorrect native password with a nonzero exit and without printing credentials. No model calls or Azure OpenAI account were required.
 
-Embedding generation/natural-language inference is intentionally removed. Precomputed fixture success never implies model availability or semantic quality. Small-fixture rank matching is not a production-scale ANN performance guarantee.
+## Issues discovered and fixed in real Azure testing
 
-## OIDC username constructor regression — 2026-10-12
+The initial OIDC run exposed two driver requirements missing from the first candidate: a nonempty username needs an auth object with both keys and an empty OIDC password; the driver's default ALLOWED_HOSTS list excludes Azure's resolved service-shard names. The final source supplies a narrow Azure DocumentDB DNS-tree allowlist after validating the original destination. It does not use a wildcard-all-hosts or native-auth fallback. Real Azure native and OIDC tests were rerun successfully after both fixes, followed by preservation reruns and independent top-five/known-ID/rank assertions.
 
-Parent live diagnostics found that MongoDB7.7.0 rejects a username-only `auth` object before connection. The driver option parser requires both username/password keys; its OIDC validator permits an empty password and rejects a nonempty one. Production configuration now uses `auth: { username, password: '' }` when an OIDC principal identifier is supplied, retaining `MONGODB-OIDC`, `$external`, the same callback/audience and TLS validation. There is no native credential fallback.
+## Local checks
 
-The added regression first reproduced the exact parser error, then passed against the real production `makeClient` and real MongoClient constructor with a nonempty synthetic principal ID. It does not connect, resolve DNS, request a token or mock the constructor. Both full local suites pass32/32 with zero skips after correction; parent owns post-fix Azure native/OIDC reruns.
+Node24.21.0, MongoDB7.7.0, Azure Identity4.13.3.33 permanent production-code/CLI tests pass, none skipped. npm ci/build/typecheck pass; full and production audits report zero known vulnerabilities. Real driver-constructor and post-SRV-host-gate regressions cover nonempty OIDC usernames and denied foreign hosts.
 
-## OIDC resolved Azure host gate — 2026-10-12
+Full repository history and tracked publication files were scanned for secrets with no matches. MIT licensing and pinned upstream provenance remain. Scans are point-in-time findings, not a guarantee of absolute security. CI uses pinned GitHub-owned actions, read-only permissions and no cloud credentials or deployment steps.
 
-MongoDB7.7.0 `MongoClient._connect` validates resolved SRV hostnames against `authMechanismProperties.ALLOWED_HOSTS` after DNS resolution but before topology connection/token acquisition. The default list only covers MongoDB domains and localhost, so Azure shards fail. The supported public driver property now explicitly allows only the validated endpoint's public-Azure DocumentDB DNS tree: `*.global.mongocluster.cosmos.azure.com` for a global endpoint, otherwise `*.mongocluster.cosmos.azure.com`. No universal/broad-Azure wildcard or ENVIRONMENT bypass is used. TLS, endpoint validation, callback and fixed token audience remain unchanged.
+## Scope and cleanup
 
-The regression executes the real driver `MongoClient.connect` host-check code with synthetic resolved SRV addresses. Only DNS results and topology connection are intercepted (the latter stops before network), and credential acquisition is counted. Expected Azure shard names with service port10260 pass the actual gate; unrelated domains, Azure/MongoDB lookalikes, suffix attacks, sovereign-cloud hosts and localhost fail with zero topology connection and zero token acquisition. Internal driver imports are confined to this version-pinned test probe. Before fixing, the test reproduces the exact managed-service ALLOWED_HOSTS failure. After fixing, both local suites pass33/33, zero skips; managed-Azure reruns remain parent-owned.
+This repository supports precomputed database/vector workflows only; live embedding/model generation was removed rather than falsely advertised as tested. The available subscription's model-service eligibility is not needed by the quickstart. No model-backed end-to-end, high availability, backup recovery, production capacity or broader cloud support is claimed.
+
+Testing used isolated disposable namespaces, not existing customer data. Environment owners are responsible for deliberately removing their test resources; the sample never automatically deletes databases/collections/indexes. The release operator verifies deletion of the shared test resource group and hosted CI before publication. No credentials, subscription identifiers or private infrastructure details are included here.

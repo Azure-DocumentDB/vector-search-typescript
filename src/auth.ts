@@ -28,6 +28,8 @@ export function makeClient(c: Config, signal: AbortSignal): MongoClient {
   if (c.authMode !== 'oidc') throw new SampleError('explicit_auth_mode_required');
   const credential = new DefaultAzureCredential({ processTimeoutInMs: Math.min(c.caseTimeoutMS, 10000) });
   return new MongoClient(`mongodb+srv://${c.host}/`, { ...common,
-    authMechanism: 'MONGODB-OIDC', ...(c.username ? { auth: { username: c.username } } : {}),
+    // MongoDB requires both auth object keys; OIDC requires an empty password.
+    // This is an OIDC principal identifier, not a native-auth fallback.
+    authMechanism: 'MONGODB-OIDC', ...(c.username ? { auth: { username: c.username, password: '' } } : {}),
     authMechanismProperties: { OIDC_CALLBACK: (params: OIDCCallbackParams) => tokenCallback(params, credential, signal) } });
 }

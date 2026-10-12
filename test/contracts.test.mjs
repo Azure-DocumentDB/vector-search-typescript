@@ -185,3 +185,22 @@ test('actual CLI aggregate exit status for connect/index/write/empty/rank/close 
     const report=JSON.parse(r.stdout);assert.equal(report.cases.length,planned.length);assert.equal(report.failed,failure==='none'?0:planned.length);assert.doesNotMatch(r.stdout+r.stderr,/mongodb\+srv:\/\/secret/);
   }
 });
+
+test('real MongoDB constructor supports nonempty OIDC username with no native password',async()=>{
+  const username='00000000-0000-4000-8000-000000000001';
+  const c=loadConfig({...env,MONGO_OIDC_USERNAME:username});
+  // Real production makeClient/MongoClient constructor: no transport hooks,
+  // no connect(), DNS, token acquisition or Azure calls.
+  const client=makeClient(c,controller().signal);
+  try {
+    assert.equal(client.options.credentials.username,username);
+    assert.equal(client.options.credentials.password,'');
+    assert.equal(client.options.credentials.mechanism,'MONGODB-OIDC');
+    assert.equal(client.options.credentials.source,'$external');
+    assert.equal(typeof client.options.credentials.mechanismProperties.OIDC_CALLBACK,'function');
+    assert.equal(client.options.tls,true);
+    assert.equal(client.options.rejectUnauthorized,true);
+    assert.equal(client.options.checkServerIdentity,undefined);
+    assert.equal(client.options.retryWrites,false);
+  } finally { await client.close(); }
+});

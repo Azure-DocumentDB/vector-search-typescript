@@ -1,76 +1,104 @@
 # vector-search-typescript
 
-**TypeScript**. Load hotel data, generate query embeddings, and search with IVF, HNSW, and DiskANN indexes.
+**TypeScript / Node.js 24** samples for Azure DocumentDB (MongoDB compatibility): IVF, HNSW and DiskANN using **precomputed vectors, no model calls**. The managed Azure `$search` / `cosmosSearch` dialect is required; this is not a generic MongoDB example.
 
-Standalone extraction of [the upstream sample](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/vector-search-typescript). See [UPSTREAM.md](UPSTREAM.md) for attribution, exact revision, changes, and maintenance policy.
+Derived from the [pinned Microsoft sample](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/vector-search-typescript). Original [MIT notice](LICENSE.md) retained; downstream changes and manual-maintenance policy are in [UPSTREAM.md](UPSTREAM.md).
 
-## Before you run
+## What this proves — and does not
 
-Use **Node.js 22 or newer and npm**, Git, and Azure CLI or another supported Azure Identity sign-in mechanism.
-Use an existing, explicitly approved disposable Azure DocumentDB environment and an Azure OpenAI embedding deployment compatible with `text-embedding-3-small` and 1536-dimensional vectors.
-Your identity needs appropriate model access and a registered DocumentDB database identity with permissions for the sample operations. Network access must be configured deliberately; signing in alone does not grant database access.
+The primary workflow uses the pinned **50-hotel, 1536-dimensional** dataset and a query vector extracted from its first record. It validates database authentication, insert-only seeding, vector-index catalog semantics, and nearest-neighbor ranks against an independent COS/L2/IP calculation. It is a small, non-semantic self-match correctness fixture, **not a performance benchmark, model-quality test, or natural-language search demo**. Raw scores from different metrics must not be compared.
 
-**These are cloud-mutating samples, not production services or read-only demos.** They can create/drop indexes, replace/drop collections, and invoke billable models. Some programs hardcode `Hotels` or collection names; an environment-variable change alone is not a universal isolation guarantee.
+Embedding generation and the old OpenAI dependency have been removed. There is no optional inference client, redirect/token forwarding path, model fallback, or billable model call. “Precomputed” does **not** mean the database is local or free: approved Azure compute/network/storage costs still apply. CI and local mock tests do not prove live Azure permissions or service-tier support. See [TESTED.md](TESTED.md) for the exact validation boundary.
 
-Upstream documentation differs on minimum DiskANN tiers and model/API versions. Confirm current service requirements for your selected region and tier; the shared provisioning template currently chooses M40. Do not infer live readiness from source code, saved output, or syntax/build CI.
+## Prerequisites
 
-## Setup
+- **Node.js 24.21.0 or newer patched Node 24**, npm, Git. `engines` deliberately excludes untested majors; Node 22 is no longer advertised. Run `npm ci` using the committed lockfile.
+- An existing, explicitly approved **disposable public-Azure DocumentDB** cluster and deliberate network access. Confirm current region/tier support for all three algorithms in the [service documentation](https://learn.microsoft.com/azure/documentdb/vector-search). Do not provision infrastructure just to satisfy these commands without cost approval.
+- Native SCRAM credentials, or `DefaultAzureCredential` with the correct Microsoft Entra principal registered for appropriate **database roles**. `az login` and subscription RBAC alone do not grant database access. [Connection/RBAC guidance](https://learn.microsoft.com/azure/documentdb/how-to-connect-role-based-access-control).
 
-Commands below use PowerShell and run from this repository root. They are instructions for a separately approved run; no live run is claimed by this extraction.
+## 1. Install and prepare data (no Azure or inference)
 
-### 1. Retrieve the pinned sample data
+Run from the repository root. POSIX shell examples; PowerShell users can set the same process variables with `$env:NAME = 'value'`.
 
-Follow [data/README.md](data/README.md). It provides explicit downloads, source links, and SHA-256 checks. No data download or model call happens automatically on clone or install.
-
-### 2. Configure the sample
-
-Copy the placeholder-only example, then edit `.env` with your approved resource configuration. Do not commit `.env`.
-
-```powershell
-if (Test-Path -LiteralPath .env) { throw '.env already exists; edit it instead of overwriting it.' }
-Copy-Item -LiteralPath .env.example -Destination .env
-```
-
-After replacing every `<placeholder>`, import these plain `KEY=value` lines into this PowerShell process. Keep values unquoted and put comments on separate lines; this reads data without executing the file:
-
-```powershell
-Get-Content -LiteralPath .env | ForEach-Object {
-    $line = $_.Trim()
-    if ($line.Length -eq 0 -or $line.StartsWith('#')) { return }
-    if ($line -notmatch '^([A-Z][A-Z0-9_]*)=(.*)$') { throw 'Invalid .env line; expected KEY=value or a comment.' }
-    [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
-}
-```
-
-The explicit import also covers samples that do not load dotenv files themselves. Node scripts and Go/Python dotenv helpers may additionally read the same repository-local `.env`.
-
-For an interactive passwordless run, sign in to the intended Azure identity with `az login`; confirm the resource permissions and database identity independently.
-
-### 3. Install/build when you are ready
-
-```powershell
+```sh
 npm ci
 npm run build
+npm test
+npm run lint
+npm audit
+npm run data:fetch
+npm run query-vector -- data/Hotels_Vector.json data/query-vector.json
 ```
 
-### 4. Run only against the approved disposable environment
+The explicit `data:fetch` command downloads the exact revision/hash described in [data/README.md](data/README.md). Nothing downloads on clone/install/test. Downloads are bounded, HTTPS-only at a fixed GitHub URL, reject redirects, and verify SHA-256 **before** creating a file. An existing fixture is verified and never replaced; mismatch fails. `query-vector` verifies the same hash, extracts the first hotel's vector, and refuses to overwrite an existing output (including a symlink). Reuse a verified existing query file instead of rerunning extraction to the same path.
 
-```powershell
-npm run start:ivf
+## 2. Choose a new disposable namespace
+
+The programs read **only the process environment**; they never implicitly load or execute `.env`. [.env.example](.env.example) documents placeholders. Never commit a populated file, place credentials in command history, or print a connection string.
+
+```sh
+export MONGO_AUTH_MODE=oidc
+export MONGO_HOST='<approved-cluster>.global.mongocluster.cosmos.azure.com'
+export MONGO_DATABASE=vectorsearch_disposable_my_unique_run
+export MONGO_COLLECTION_PREFIX=oidc
+export VECTOR_SEARCH_ALLOW_WRITES=true
+export DATA_FILE_WITH_VECTORS="$PWD/data/Hotels_Vector.json"
+export QUERY_VECTOR_FILE="$PWD/data/query-vector.json"
+```
+
+Sign in to the intended tenant/principal and independently verify database roles. OIDC supports only the public Azure DocumentDB domains `*.mongocluster.cosmos.azure.com` and `*.global.mongocluster.cosmos.azure.com` with exactly one cluster label. Alternatively `MONGO_CLUSTER_NAME` constructs the latter hostname. Optional `MONGO_OIDC_USERNAME` identifies the principal where required. The current MongoDB Node **v1 callback contract** uses `timeoutContext: AbortSignal`; Azure's millisecond expiry is converted to a positive **seconds** lifetime. Null, empty, expired tokens and unknown callback versions fail. The fixed audience is `https://ossrdbms-aad.database.windows.net/.default`, never a server-provided issuer/scope/audience.
+
+For native authentication set `MONGO_AUTH_MODE=connection-string` and securely inject `MONGO_CONNECTION_STRING` into the process environment. It must be an Azure `mongodb+srv://` URI with nonempty native username/password and **no database path**; `MONGO_DATABASE` selects the actual DB. SCRAM-SHA-256/SCRAM-SHA-1 and authSource=admin are supported. URI options are allowlisted: tls/ssl=true; TLS-bypass flags=false; retryWrites=false; supported authMechanism/authSource; simple appName. Unknown/duplicate options fail closed. Unset `MONGO_OIDC_USERNAME` in native mode and `MONGO_CONNECTION_STRING` in OIDC mode. Both modes validate domains/TLS/config/data before credentials or network, enforce certificate/hostname validation, and never fall back between authentication modes. Arbitrary gateways, localhost, sovereign clouds, custom CAs and TLS bypasses are intentionally unsupported.
+
+## 3. Run the three cosine cases
+
+```sh
+npm start                         # IVF + HNSW + DiskANN, COS; all attempted
+npm run start:ivf                  # optional individual case
 npm run start:hnsw
 npm run start:diskann
+
+# Explicit publication/integration gate, same real workflow and strict rank oracle:
+LIVE_AZURE_TEST=true npm run test:live
 ```
 
-Optional model-calling embedding generation: `npm run start:embed`. Index inspection: `npm run start:show-indexes`. The upstream `start:one-insert` command is not carried over because its source file is absent.
+`test:live` **fails** without exactly `LIVE_AZURE_TEST=true`; it never silently skips. Use `node dist/cli.js --live` if stdout must contain only JSON (npm prints script banners). Every case gets a separate collection `<prefix>_<ivf|hnsw|diskann>_cos`. Every selected case is attempted even after an earlier failure. Results contain safe IDs/raw finite scores, seed counts, expected ranks, per-case status/errors, and aggregate succeeded/failed counts. Empty/malformed results, wrong rank, missing index, failed writes and close errors all produce exit1. Unsupported algorithms are failures, not green skips. Exceptions from drivers/SDKs/filesystems are redacted to a safe label plus numeric server code, never a connection string, token, document, or stack trace.
 
-## Shared provisioning
+## Safety, idempotency and deadlines
 
-Provisioning remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra), not duplicated here. If you choose azd, use a separate checkout of the [upstream repository root](https://github.com/Azure-Samples/documentdb-samples/blob/f5a2675bbf349737234d0391e3ebee24b260e06f/README.md), not this sample directory.
-Review and harden its broad firewall/admin defaults and fallback administrator password before any deployment. No infrastructure, cloud credentials, GitHub Actions workflows, or automatic deployments are included in this extraction.
+- Writes require exactly `VECTOR_SEARCH_ALLOW_WRITES=true` and an explicitly named `vectorsearch_disposable_<lowercase_run_id>` DB, maximum63 characters. A fresh unique run ID and separate native/OIDC prefixes are recommended. A name guard is not an authorization boundary; use least-privilege roles.
+- No `drop`, `deleteMany`, reset, replace, or automatic cleanup operations exist. All records and unrelated indexes are preserved. The operator owns eventual disposable-resource cleanup and costs.
+- Each hotel gets its original string `_id`, or deterministic `vectorsearch:<HotelId>`. Seeding uses `_id`-filtered `$setOnInsert` upserts. Existing documents are **never updated**, even if changed externally; repeated runs report inserted0. Partial write failures can leave earlier insertions; the command fails and rerunning is safe.
+- Entire pinned seed and finite, nonzero query vector validate before network/mutations. Query must have exactly1536 dimensions. An arbitrary same-dimensional vector is not evidence of model compatibility.
+- Indexes are checked **before seeding, on every run**, including populated collections. Missing indexes are created and re-read. Conflicting vector definitions, compound keys, extra/missing vector options, sparse/partial/unique/TTL/hidden or unknown catalog semantics fail closed; nothing is dropped. Only version/namespace/background metadata and explicit false sparse/unique/hidden flags are tolerated.
+- Small-fixture settings: IVF numLists1; HNSW m16/efConstruction64; DiskANN maxDegree20/lBuild50. These are not tuned production defaults.
+- Each case has a configurable deadline (default120s, maximum300s), MongoDB client-side operation deadlines, bounded connection/socket/selection waits, abortable OIDC and query calls, and up to5s client/cursor-close grace. A final process watchdog bounds non-cooperating transport handles. Failed cases do not consume the next case's budget. Immediate index invisibility or empty results fail rather than hiding errors in retries; rerun safely once the service is ready.
+- The strict independent top-K **rank** oracle is computed from the fixture, never from server scores. Tied/ambiguous oracle input is rejected. A changed stored fixture or unrelated nearby vector can correctly cause a quality failure; use a fresh collection rather than deleting records. Approximate search generally does not guarantee exact ranks: this is deliberately a narrow readiness gate on this small fixture.
 
-## Maintenance and license
+## Configuration
 
-This is a standalone downstream snapshot, not a GitHub fork of the complete monorepo. Upstream fixes must be reviewed and ported manually; update the recorded revision in [UPSTREAM.md](UPSTREAM.md) when doing so.
-Dependencies and sample algorithms are retained from the pinned source. Static extraction checks do not certify dependency compatibility, authentication, deployment, or model behavior.
+| Variable | Contract |
+| --- | --- |
+| `MONGO_AUTH_MODE` | Required: `oidc` or `connection-string` |
+| `MONGO_HOST` / `MONGO_CLUSTER_NAME` | Approved public-Azure FQDN or cluster label for OIDC |
+| `MONGO_OIDC_USERNAME` | Optional OIDC principal identifier |
+| `MONGO_CONNECTION_STRING` | Native SCRAM URI only; secret |
+| `MONGO_DATABASE` | Required unique `vectorsearch_disposable_<run>` |
+| `MONGO_COLLECTION_PREFIX` | Required lower-case identifier, 1–40 chars |
+| `VECTOR_SEARCH_ALLOW_WRITES` | Required literal `true` |
+| `DATA_FILE_WITH_VECTORS` | Default `data/Hotels_Vector.json`; pinned hash enforced |
+| `QUERY_VECTOR_FILE` | Required precomputed JSON numeric array |
+| `EMBEDDING_DIMENSIONS` | Fixed1536; other dimensions rejected |
+| `LOAD_SIZE_BATCH` | Default50; integer1–1000 |
+| `TOP_K` | Default5; integer1–50; unambiguous oracle ranks required |
+| `VECTOR_SEARCH_CASE_TIMEOUT_MS` | Default120000; integer1000–300000 |
+| `LIVE_AZURE_TEST` | `true` required only for explicit `--live` gate |
+| `EMBEDDING_MODE` | Optional `offline` only; no inference implementation |
 
-Sample code is Copyright (c) Microsoft Corporation, under the preserved [MIT license](LICENSE.md). Dataset source/terms remain linked in the data guide.
+The field is deliberately fixed to `DescriptionVector`, source identity to `HotelId`, and the supplied dataset to its pinned hash. Unsupported overrides are not a general import API. Old `start:embed` and all-database `start:show-indexes` commands have been removed, not silently retained with different unsafe behavior. Normal runs already inspect only their selected collections' indexes.
+
+## CI and maintenance
+
+CI uses SHA-pinned GitHub-owned actions, read-only repository permissions, no retained checkout credential, and no Azure secrets/services/inference. It runs `npm ci`, strict TypeScript build/typecheck, production-code unit/mock and CLI subprocess tests, full and production dependency audits, and verifies the missing-live-opt-in failure. Live validation must be separately approved and run by an operator. See [TESTED.md](TESTED.md).
+
+This is a downstream snapshot, not the complete upstream monorepo or infrastructure deployment. Review/port upstream fixes manually and update [UPSTREAM.md](UPSTREAM.md). Dataset hashes identify inputs, not a separate rights grant; original source terms remain in the data guide.

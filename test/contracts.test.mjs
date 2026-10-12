@@ -204,3 +204,33 @@ test('real MongoDB constructor supports nonempty OIDC username with no native pa
     assert.equal(client.options.retryWrites,false);
   } finally { await client.close(); }
 });
+
+test('real MongoDB post-SRV OIDC gate accepts Azure service shards and denies foreign hosts before auth',async(t)=>{
+  // Internal imports are version-pinned test probes only. Production uses public
+  // authMechanismProperties.ALLOWED_HOSTS and the unmodified driver host gate.
+  const {createRequire}=await import('node:module');const require=createRequire(import.meta.url);
+  const connectionString=require('mongodb/lib/connection_string.js');
+  const {HostAddress}=require('mongodb/lib/utils.js');
+  const {Topology}=require('mongodb/lib/sdam/topology.js');
+  const {DefaultAzureCredential}=await import('@azure/identity');
+  let host='',connections=0,tokens=0;
+  const stop=new Error('TEST_STOP_BEFORE_NETWORK');
+  t.mock.method(connectionString,'resolveSRVRecord',async()=>[HostAddress.fromString(host)]);
+  t.mock.method(Topology.prototype,'connect',async()=>{connections++;throw stop;});
+  t.mock.method(DefaultAzureCredential.prototype,'getToken',async()=>{tokens++;throw new Error('token_must_not_be_requested');});
+  for(const [endpoint,allowed] of [
+    ['approved.global.mongocluster.cosmos.azure.com',['service-shard.global.mongocluster.cosmos.azure.com:10260']],
+    ['approved.mongocluster.cosmos.azure.com',['service-shard.mongocluster.cosmos.azure.com:10260','service-shard.global.mongocluster.cosmos.azure.com:10260']]
+  ]) {
+    for(const target of [...allowed,'evil.example:10260','service-shard.global.mongocluster.cosmos.azure.com.evil.example:10260','evil.azure.com:10260','evil.mongodb.net:10260','localhost:10260','service-shard.global.mongocluster.cosmos.azure.cn:10260','evilmongocluster.cosmos.azure.com:10260']) {
+      host=target;const before=connections;
+      const client=makeClient(loadConfig({...env,MONGO_HOST:endpoint,MONGO_OIDC_USERNAME:'00000000-0000-4000-8000-000000000001'}),controller().signal);
+      try {
+        assert.ok(!client.options.credentials.mechanismProperties.ENVIRONMENT,'service-auth bypass must not be set');
+        if(allowed.includes(target)) {await assert.rejects(client.connect(),error=>error===stop);assert.equal(connections,before+1);}
+        else {await assert.rejects(client.connect(),error=>error.name==='MongoInvalidArgumentError'&&error.message.includes('not valid for OIDC'));assert.equal(connections,before);}
+        assert.equal(tokens,0);
+      } finally {await client.close();}
+    }
+  }
+});

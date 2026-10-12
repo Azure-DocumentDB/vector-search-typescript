@@ -31,5 +31,12 @@ export function makeClient(c: Config, signal: AbortSignal): MongoClient {
     // MongoDB requires both auth object keys; OIDC requires an empty password.
     // This is an OIDC principal identifier, not a native-auth fallback.
     authMechanism: 'MONGODB-OIDC', ...(c.username ? { auth: { username: c.username, password: '' } } : {}),
-    authMechanismProperties: { OIDC_CALLBACK: (params: OIDCCallbackParams) => tokenCallback(params, credential, signal) } });
+    authMechanismProperties: {
+      // MongoDB checks resolved SRV hosts before connecting/acquiring a token.
+      // Defaults only cover MongoDB domains. Restrict to the validated endpoint's
+      // public-Azure DocumentDB DNS tree; never '*' or the broad '*.azure.com'.
+      ALLOWED_HOSTS: [c.host.endsWith('.global.mongocluster.cosmos.azure.com')
+        ? '*.global.mongocluster.cosmos.azure.com' : '*.mongocluster.cosmos.azure.com'],
+      OIDC_CALLBACK: (params: OIDCCallbackParams) => tokenCallback(params, credential, signal)
+    } });
 }
